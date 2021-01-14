@@ -1,0 +1,379 @@
+
+## Ensemble Techniques Project
+```{r}
+rm(list=ls())
+#Loading the data and checking structure and 5-point summary
+library(readr)
+dp=read_csv("Data - Parkinsons.txt",col_names = T)
+str(dp)
+summary(dp)
+#convering status to categorical
+dp$status=as.factor(dp$status)
+#checking for thr distribution of status
+prop.table(table(dp$status))
+#checking for missing values
+sapply(dp, function(x) sum(is.na(x)))
+#dropping the names variable
+dp=dp[,-1]
+```
+
+## EDA
+```{r}
+library(DataExplorer)
+#Density plot 
+plot_density(dp)
+#correlation plot
+library(corrplot)
+corrplot(cor(dp[,-17]),type='upper',method="number",number.cex = 0.8)
+dp2=dp[,-17]
+
+#histogram
+par(mfrow=c(4,6))
+for (i in names(dp2)){
+  hist(dp2[[i]],col=c("blue"),main = names(dp2[i]))
+}
+
+#boxplots
+for (i in names(dp2)){
+  boxplot(dp2[[i]],col=c("blue"),main = names(dp2[i]))
+}
+par(mfrow=c(1,1))
+
+#Bi-variate plot
+library(tidyverse)
+library(reshape2)
+melt=melt(dp,id=c("status"))
+melt%>%ggplot(aes(status,value))+geom_boxplot(aes(color=status),alpha=0.3)+facet_wrap(.~variable,scales = "free_x",nrow=4)+coord_flip()+ggtitle("Bivariate boxplots")
+
+
+#decision tree 
+set.seed(1000)
+library(caTools)
+spl=sample.split(dp$status,SplitRatio = 0.7)
+tr=subset(dp,spl==T)
+ts=subset(dp,spl==F)
+
+set.seed(10)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+r.ctrl=rpart.control(minisplit=3,minbucket=3,cp=0.02,xval=10)
+dt=rpart(formula=tr$status~.,data=tr,method="class",control = r.ctrl)
+plotcp(dt)
+dt$cptable
+fancyRpartPlot(dt)
+
+#fitting on train
+tr$pred=predict(dt,tr,type="class")
+tr$prob=predict(dt,tr,type="prob")[,"1"]
+tr$prob=ifelse(tr$prob>0.5,1,0)
+tr$prob=as.factor(tr$prob)
+library(caret)
+confusionMatrix(tr$prob,tr$status,positive = "1")
+
+#fitting on test
+ts$pred=predict(dt,ts,type="class")
+ts$prob=predict(dt,ts,type="prob")[,"1"]
+ts$prob=ifelse(ts$prob>0.5,1,0)
+ts$prob=as.factor(ts$prob)
+library(caret)
+confusionMatrix(ts$prob,ts$status,positive = "1")
+library(MLmetrics)
+F1_Score(ts$prob,ts$status,positive = "1")
+```
+
+## Logistics Regression
+```{r}
+set.seed(100)
+library(caTools)
+spl=sample.split(dp$status,SplitRatio = 0.7)
+tr=subset(dp,spl==T)
+ts=subset(dp,spl==F)
+
+set.seed(21)
+log=glm(tr$status~.,data=tr,family = binomial(link='logit'))
+summary(log)
+
+tr$pred=predict(log,tr,type="response")
+tr$prob=ifelse(tr$pred>0.3,1,0)
+tr$prob=as.factor(tr$prob)
+library(caret)
+confusionMatrix(tr$prob,tr$status,positive = "1")
+
+ts$pred=predict(log,ts,type="response")
+ts$prob=ifelse(ts$pred>0.3,1,0)
+ts$prob=as.factor(ts$prob)
+library(caret)
+confusionMatrix(ts$prob,ts$status,positive = "1")
+F1_Score(ts$prob,ts$status,positive = "1")
+```
+
+## Random Forest
+```{r}
+colnames(dp) = make.names(colnames(dp))
+set.seed(1001)
+library(caTools)
+spl=sample.split(dp$status,SplitRatio = 0.7)
+tr=subset(dp,spl==T)
+ts=subset(dp,spl==F)
+
+
+set.seed(211)
+library(randomForest)
+rf=randomForest(status~.,data=tr,ntree=35,mtry=3,nodesize=5,importance=T)
+rf
+plot(rf)
+importance(rf)
+varImpPlot(rf,main="Variable Importance")
+
+#tuning random forest
+set.seed(123)
+trrf=tuneRF(tr[,-17],y=tr$status,mtryStart = 5,stepFactor = 1.5,ntreeTry=35,improve = 0.0001,nodesize=1,
+            trace=T,plot=T,doBest = T,importance=T)
+
+#fitting on train
+tr$pred=predict(rf,tr,type="prob")[,"1"]
+tr$prob=ifelse(tr$pred>0.3,1,0)
+tr$prob=as.factor(tr$prob)
+library(caret)
+confusionMatrix(tr$prob,tr$status,positive = "1")
+
+#fitting on test
+ts$pred=predict(rf,ts,type="prob")[,"1"]
+ts$prob=ifelse(ts$pred>0.3,1,0)
+ts$prob=as.factor(ts$prob)
+library(caret)
+confusionMatrix(ts$prob,ts$status,positive = "1")
+F1_Score(ts$prob,ts$status,positive = "1")
+```
+
+## KNN
+```{r}
+#scaling the variable
+dp2=scale(dp2)
+dp2=as.data.frame(dp2)
+dp2=cbind(dp$status,dp2)
+colnames(dp2)[1]="status"
+
+#splitting into train and test
+set.seed(1011)
+library(caTools)
+spl=sample.split(dp2$status,SplitRatio = 0.7)
+tr=subset(dp2,spl==T)
+ts=subset(dp2,spl==F)
+
+#knn
+set.seed(400)
+ctrl=trainControl(method="cv",number=10)
+knn=train(status ~ ., data = tr, method = "knn", trControl = ctrl,tuneGrid = expand.grid(k = c(3,5,7,9)))
+knn
+plot(knn)
+
+#fitting on train
+tr$pred=predict(knn,tr,type="prob")[,"1"]
+tr$prob=ifelse(tr$pred>0.3,1,0)
+tr$prob=as.factor(tr$prob)
+library(caret)
+confusionMatrix(tr$prob,tr$status,positive = "1")
+
+#fitting on test
+ts$pred=predict(knn,ts,type="prob")[,"1"]
+ts$prob=ifelse(ts$pred>0.3,1,0)
+ts$prob=as.factor(ts$prob)
+library(caret)
+confusionMatrix(ts$prob,ts$status,positive = "1")
+F1_Score(ts$prob,ts$status,positive = "1")
+
+```
+
+## XgBoost
+```{r}
+#splitting to train and test
+set.seed(1241)
+library(caTools)
+spl=sample.split(dp$status,SplitRatio = 0.7)
+tr=subset(dp,spl==T)
+ts=subset(dp,spl==F)
+
+gd_features_train=as.matrix(tr[,-17])
+gd_label_train=as.matrix(tr[,17])
+gd_features_test=as.matrix(ts[,-17])
+```
+
+
+```{r}
+#tuning xgboost
+tp_xgb<-vector()
+lr <- c(0.01,0.1,0.3,0.5,0.7,1)
+md<-c(1,3,5,9,7,15)
+nr<-c(2, 50, 100,500)
+
+library(xgboost)
+for (i in lr){
+  xgb.fit <- xgboost(
+    data = gd_features_train,
+    label = gd_label_train,
+    eta = 0.1,
+    max_depth =1,
+    min_child_weight = 1,
+    nrounds = 100,
+    nfold = 10,
+    objective = "binary:logistic", 
+    verbose = 0,               
+    early_stopping_rounds = 10 
+  )
+  ts$pred=predict(xgb.fit, gd_features_test)
+  tp_xgb<-cbind(tp_xgb,sum(ts$status==1 & ts$pred>=0.5))
+}
+tp_xgb
+```
+
+
+```{r}
+#using tuned xgboost
+xgb.fit <- xgboost(
+  data = gd_features_train,
+  label = gd_label_train,
+  eta = 0.1,
+  max_depth =1,
+  min_child_weight = 7,
+  nrounds = 100,
+  nfold = 10,
+  objective = "binary:logistic", 
+  verbose = 0,               
+  early_stopping_rounds = 10 
+)
+ts$pred=predict(xgb.fit, gd_features_test)
+summary(ts$pred)
+
+xgb.importance(model = xgb.fit)
+
+ts$prob=ifelse(ts$pred>0.5,1,0)
+ts$prob=as.factor(ts$prob)
+ts$status=as.factor(ts$status)
+str(ts$prob)
+library(caret)
+confusionMatrix(ts$status,ts$prob,positive = "1")
+F1_Score(ts$status,ts$prob,positive = "1")
+```
+
+## Bagging
+```{r}
+library(ipred)
+library(rpart)
+set.seed(127)
+library(caTools)
+spl=sample.split(dp$status,SplitRatio = 0.7)
+tr=subset(dp,spl==T)
+ts=subset(dp,spl==F)
+
+set.seed(50)
+bg=bagging(status ~., data=tr,control=rpart.control(maxdepth=3, minsplit=5))
+tr$pred=predict(bg,tr,type="prob")[,"1"]
+tr$prob=ifelse(tr$pred>0.3,1,0)
+tr$prob=as.factor(tr$prob)
+confusionMatrix(tr$status,tr$prob,positive = "1")
+varImp(bg)
+
+#variable importance
+imp=as.data.frame(varImp(bg))
+imp=tibble::rownames_to_column(imp, "Variable") 
+imp%>%arrange(desc(Overall))->imp
+imp
+
+#fitting on test
+ts$pred=predict(bg,ts,type="prob")[,"1"]
+ts$prob=ifelse(ts$pred>0.3,1,0)
+ts$prob=as.factor(ts$prob)
+library(caret)
+confusionMatrix(ts$prob,ts$status,positive = "1")
+F1_Score(ts$status,ts$prob,positive = "1")
+```
+
+## Gradient boosting
+```{r}
+#load the data
+library(gbm)
+library(readr)
+dp=read_csv("Data - Parkinsons.txt",col_names = T)
+dp=dp[,-1]
+#splitting into train and test
+set.seed(1271)
+library(caTools)
+library(caret)
+spl=sample.split(dp$status,SplitRatio = 0.7)
+tr=subset(dp,spl==T)
+ts=subset(dp,spl==F)
+
+#gbm 
+set.seed(501)
+gbb <- gbm(
+  formula = status~.,
+  distribution = "bernoulli",
+  data = tr,
+  n.trees = 200,
+  interaction.depth = 3,
+  shrinkage = 0.01,
+  cv.folds = 10,
+)  
+
+summary.gbm(gbb)
+
+#fiiting on train
+tr$pred=predict(gbb,tr,type="response")
+tr$prob=ifelse(tr$pred>0.5,1,0)
+tr$prob=as.factor(tr$prob)
+tr$status=as.factor(tr$status)
+confusionMatrix(tr$status,tr$prob,positive = "1")
+
+#fitting on test
+ts$pred=predict(gbb,ts,type="response")
+ts$prob=ifelse(ts$pred>0.5,1,0)
+ts$prob=as.factor(ts$prob)
+ts$status=as.factor(ts$status)
+confusionMatrix(ts$prob,ts$status,positive = "1")
+library(MLmetrics)
+F1_Score(ts$prob,ts$status,positive = "1")
+```
+
+## LightGBM
+```{r}
+set.seed(147)
+library(caTools)
+library(caret)
+colnames(dp) = make.names(colnames(dp))
+spl=sample.split(dp$status,SplitRatio = 0.7)
+tr=subset(dp,spl==T)
+ts=subset(dp,spl==F)
+gd_features_train<-as.matrix(tr[,-17])
+gd_label_train<-as.matrix(tr[,17])
+gd_features_test<-as.matrix(ts[,-17])
+set.seed(189)
+
+
+library(lightgbm)
+lg=lightgbm(
+  data = gd_features_train,
+  max_depth=3,
+  label = gd_label_train,
+  learning_rate = 0.1,
+  nrounds = 100,
+  objective = "binary",
+  early_stopping_rounds=NULL,
+  verbose = 1,
+)
+
+ts$pred=predict(lg, gd_features_test)
+summary(ts$pred)
+
+ts$prob=ifelse(ts$pred>0.4,1,0)
+ts$prob=as.factor(ts$prob)
+ts$status=as.factor(ts$status)
+str(ts$prob)
+library(caret)
+confusionMatrix(ts$status,ts$prob,positive = "1")
+F1_Score(ts$prob,ts$status,positive = "1")
+
+q()
+```
+
